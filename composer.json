@@ -1,0 +1,12 @@
+{
+    "name": "christalone/school_system",
+    "autoload": {
+        "psr-4": {
+            "Christalone\\SchoolSystem\\": "src/"
+        }
+    },
+    "require": {
+        "phpoffice/phpspreadsheet": "^4.2",
+        "tecnickcom/tcpdf": "^6.4"
+    }
+}

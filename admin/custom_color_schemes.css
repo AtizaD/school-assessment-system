@@ -1,0 +1,185 @@
+/* 
+ * Custom Color Schemes for Future Use
+ * Reserved for later implementation
+ */
+
+/* ======================================= */
+/* MODERN GRADIENT SCHEME (Reserved) */
+/* ======================================= */
+.gradient-scheme {
+    /* Primary Gradients */
+    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --gradient-secondary: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --gradient-success: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    --gradient-warning: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+    --gradient-info: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --gradient-danger: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+    
+    /* Performance Badge Colors */
+    --excellent-gradient: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    --good-gradient: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    --average-gradient: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+    --poor-gradient: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
+    
+    /* Stat Card Gradients */
+    --stat-card-1: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    --stat-card-2: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    --stat-card-3: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    --stat-card-4: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+/* Modern Gradient Stat Cards */
+.gradient-scheme .stat-card-modern-1 {
+    background: var(--stat-card-1) !important;
+}
+
+.gradient-scheme .stat-card-modern-2 {
+    background: var(--stat-card-2) !important;
+}
+
+.gradient-scheme .stat-card-modern-3 {
+    background: var(--stat-card-3) !important;
+}
+
+.gradient-scheme .stat-card-modern-4 {
+    background: var(--stat-card-4) !important;
+}
+
+/* Modern Performance Badges */
+.gradient-scheme .performance-badge.excellent {
+    background: var(--excellent-gradient) !important;
+    color: white;
+}
+
+.gradient-scheme .performance-badge.good {
+    background: var(--good-gradient) !important;
+    color: white;
+}
+
+.gradient-scheme .performance-badge.average {
+    background: var(--average-gradient) !important;
+    color: white;
+}
+
+.gradient-scheme .performance-badge.poor {
+    background: var(--poor-gradient) !important;
+    color: white;
+}
+
+/* Modern Buttons */
+.gradient-scheme .btn-gradient-primary {
+    background: var(--gradient-primary);
+    border: none;
+    color: white;
+}
+
+.gradient-scheme .btn-gradient-primary:hover {
+    background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%);
+    color: white;
+}
+
+/* Modern Card Headers */
+.gradient-scheme .card-header-gradient {
+    background: var(--gradient-primary) !important;
+    color: white !important;
+}
+
+/* Modern Progress Bars */
+.gradient-scheme .progress-modern {
+    height: 8px;
+    border-radius: 10px;
+    background: rgba(0,0,0,0.1);
+}
+
+.gradient-scheme .progress-modern .progress-bar {
+    border-radius: 10px;
+}
+
+/* Modern Table Styling */
+.gradient-scheme .table-modern {
+    border-radius: 0.5rem;
+    overflow: hidden;
+    box-shadow: 0 0 20px rgba(0,0,0,0.1);
+}
+
+.gradient-scheme .table-modern thead {
+    background: var(--gradient-primary);
+    color: white;
+}
+
+.gradient-scheme .table-modern tbody tr:hover {
+    background-color: rgba(102, 126, 234, 0.1);
+    transform: scale(1.01);
+    transition: all 0.2s ease;
+}
+
+/* Loading Animation */
+.gradient-scheme .loading-placeholder {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* ======================================= */
+/* ADDITIONAL COLOR SCHEMES (Reserved) */
+/* ======================================= */
+
+/* Ocean Theme */
+.ocean-scheme {
+    --primary: #006994;
+    --secondary: #0891b2;
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --info: #0284c7;
+}
+
+/* Sunset Theme */
+.sunset-scheme {
+    --primary: #ea580c;
+    --secondary: #f59e0b;
+    --success: #65a30d;
+    --warning: #eab308;
+    --danger: #dc2626;
+    --info: #3b82f6;
+}
+
+/* Forest Theme */
+.forest-scheme {
+    --primary: #15803d;
+    --secondary: #059669;
+    --success: #16a34a;
+    --warning: #ca8a04;
+    --danger: #dc2626;
+    --info: #0284c7;
+}
+
+/* Purple Theme */
+.purple-scheme {
+    --primary: #7c3aed;
+    --secondary: #a855f7;
+    --success: #059669;
+    --warning: #d97706;
+    --danger: #dc2626;
+    --info: #3b82f6;
+}
+
+/*
+ * Usage Instructions:
+ * 
+ * To apply modern gradient scheme:
+ * Add class "gradient-scheme" to the body or main container
+ * 
+ * To apply other schemes:
+ * Add respective class names (ocean-scheme, sunset-scheme, etc.)
+ * 
+ * Example:
+ * <body class="gradient-scheme">
+ * or
+ * <main class="ocean-scheme">
+ */

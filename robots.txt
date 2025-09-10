@@ -1,0 +1,100 @@
+# Robots.txt for vc.bassflix.xyz
+# Educational Assessment Platform - No Scraping Allowed
+
+# Block all web crawlers and scrapers
+User-agent: *
+Disallow: /
+
+# Specifically block common scrapers
+User-agent: wget
+Disallow: /
+
+User-agent: curl
+Disallow: /
+
+User-agent: HTTrack
+Disallow: /
+
+User-agent: SiteSnagger
+Disallow: /
+
+User-agent: WebCopier
+Disallow: /
+
+User-agent: WebStripper
+Disallow: /
+
+User-agent: WebSauger
+Disallow: /
+
+User-agent: WebRipper
+Disallow: /
+
+User-agent: WebZIP
+Disallow: /
+
+User-agent: teleport
+Disallow: /
+
+User-agent: TeleportPro
+Disallow: /
+
+User-agent: Microsoft URL Control
+Disallow: /
+
+User-agent: EmailCollector
+Disallow: /
+
+User-agent: EmailSiphon
+Disallow: /
+
+User-agent: EmailWolf
+Disallow: /
+
+User-agent: ExtractorPro
+Disallow: /
+
+User-agent: CopyRightCheck
+Disallow: /
+
+User-agent: crescent
+Disallow: /
+
+User-agent: psbot
+Disallow: /
+
+User-agent: NSPlayer
+Disallow: /
+
+User-agent: Microsoft Data Access Internet Publishing Provider Protocol
+Disallow: /
+
+# Block AI training crawlers
+User-agent: ChatGPT-User
+Disallow: /
+
+User-agent: OpenAI
+Disallow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: Claude-Web
+Disallow: /
+
+User-agent: anthropic-ai
+Disallow: /
+
+User-agent: Claude-Instant
+Disallow: /
+
+# No sitemap provided to prevent discovery
+# Educational content is private and proprietary
+
+# Crawl delay for any allowed bots (none in this case)
+Crawl-delay: 86400
+
+# Clear notice
+# This is a private educational assessment platform
+# Content scraping, copying, or unauthorized access is prohibited
+# All assessment materials are proprietary and copyrighted
