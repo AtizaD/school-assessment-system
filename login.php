@@ -238,6 +238,7 @@ $pageTitle = 'BASS';
             --text-light: #FFFFFF;
             --error: #dc2626;
             --error-light: #fee2e2;
+            --student-highlight: #2563eb;
         }
 
         /* Reset and basic styling */
@@ -347,9 +348,15 @@ $pageTitle = 'BASS';
             background-color: transparent;
             border: 1.5px solid #ddd;
             border-radius: 8px;
-            transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            transition: border-color 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
             color: var(--text-dark);
             height: 50px;
+        }
+
+        /* Student ID highlighting */
+        .form-group input.student-id {
+            border-color: var(--student-highlight);
+            box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
         }
 
         /* Important: Fix for autofill background */
@@ -388,6 +395,32 @@ $pageTitle = 'BASS';
             color: var(--primary-dark);
             background-color: white;
             transform: translateY(-50%);
+        }
+
+        .form-group input.student-id:focus + label,
+        .form-group input.student-id:not(:placeholder-shown) + label {
+            color: var(--student-highlight);
+        }
+
+        /* Student ID indicator */
+        .student-id-indicator {
+            position: absolute;
+            right: 50px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--student-highlight);
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 2;
+            background: white;
+            padding: 2px 6px;
+            border-radius: 10px;
+            border: 1px solid var(--student-highlight);
+        }
+
+        .student-id-indicator.show {
+            opacity: 1;
         }
 
         /* Password toggle */
@@ -569,6 +602,11 @@ $pageTitle = 'BASS';
             .student-reg-btn {
                 padding: 10px;
             }
+
+            .student-id-indicator {
+                right: 45px;
+                font-size: 10px;
+            }
         }
     </style>
 </head>
@@ -607,44 +645,47 @@ $pageTitle = 'BASS';
         <?php endif; ?>
 
         <form method="POST" action="<?php echo htmlspecialchars($_SERVER['PHP_SELF']); ?>" autocomplete="on">
-    <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
-    
-    <div class="form-group">
-        <input 
-            type="text" 
-            id="identifier" 
-            name="identifier" 
-            required 
-            autocomplete="username"
-            spellcheck="false"
-            data-lpignore="true"
-            placeholder="Username or Email"
-        >
-        <label for="identifier">Username or Email</label>
-    </div>
+            <input type="hidden" name="csrf_token" value="<?php echo generateCSRFToken(); ?>">
+            
+            <div class="form-group">
+                <input 
+                    type="text" 
+                    id="identifier" 
+                    name="identifier" 
+                    required 
+                    autocomplete="username"
+                    spellcheck="false"
+                    data-lpignore="true"
+                    placeholder="Username or Email"
+                >
+                <label for="identifier">Username or Email</label>
+                <span class="student-id-indicator" id="studentIndicator">
+                    <i class="fas fa-graduation-cap"></i> Student ID
+                </span>
+            </div>
 
-    <div class="form-group">
-        <input 
-            type="password" 
-            id="password" 
-            name="password" 
-            required 
-            autocomplete="current-password"
-            spellcheck="false"
-            data-lpignore="true"
-            placeholder="Password"
-        >
-        <label for="password">Password</label>
-        <span class="password-toggle" onclick="togglePassword()">
-            <i class="fas fa-eye"></i>
-        </span>
-    </div>
+            <div class="form-group">
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    required 
+                    autocomplete="current-password"
+                    spellcheck="false"
+                    data-lpignore="true"
+                    placeholder="Password"
+                >
+                <label for="password">Password</label>
+                <span class="password-toggle" onclick="togglePassword()">
+                    <i class="fas fa-eye"></i>
+                </span>
+            </div>
 
-    <button type="submit">
-        <i class="fas fa-sign-in-alt"></i>
-        <span>Login</span>
-    </button>
-</form>
+            <button type="submit">
+                <i class="fas fa-sign-in-alt"></i>
+                <span>Login</span>
+            </button>
+        </form>
         
         <div class="auth-links">
             <a href="forgot-password.php" class="forgot-password-link">
@@ -660,6 +701,57 @@ $pageTitle = 'BASS';
     </div>
 
     <script>
+    // Smart capitalization for student IDs (start with 1, 2, or 3)
+    function smartCapitalize(input) {
+        const value = input.value.trim();
+        
+        // Don't capitalize if it looks like an email
+        if (value.includes('@')) {
+            removeStudentIdHighlight(input);
+            return false;
+        }
+        
+        // Student IDs start with 1, 2, or 3
+        if (value.length > 0 && /^[123]/.test(value)) {
+            const originalValue = input.value;
+            input.value = value.toUpperCase();
+            
+            // Add student ID visual feedback
+            addStudentIdHighlight(input);
+            
+            // Brief color change if value was capitalized
+            if (originalValue !== input.value) {
+                input.style.color = '#2563eb';
+                setTimeout(() => {
+                    input.style.color = '';
+                }, 1000);
+            }
+            
+            return true;
+        } else {
+            removeStudentIdHighlight(input);
+            return false;
+        }
+    }
+
+    // Add student ID visual indicators
+    function addStudentIdHighlight(input) {
+        input.classList.add('student-id');
+        const indicator = document.getElementById('studentIndicator');
+        if (indicator) {
+            indicator.classList.add('show');
+        }
+    }
+
+    // Remove student ID visual indicators
+    function removeStudentIdHighlight(input) {
+        input.classList.remove('student-id');
+        const indicator = document.getElementById('studentIndicator');
+        if (indicator) {
+            indicator.classList.remove('show');
+        }
+    }
+
     function togglePassword() {
         const passwordInput = document.getElementById('password');
         const toggleIcon = document.querySelector('.password-toggle i');
@@ -675,15 +767,42 @@ $pageTitle = 'BASS';
         }
     }
 
-    // Initialize floating labels based on input state
+    // Initialize floating labels and smart capitalization
     document.addEventListener('DOMContentLoaded', function() {
         const inputs = document.querySelectorAll('.form-group input');
+        const identifierInput = document.getElementById('identifier');
         
+        // Add smart capitalization to identifier input
+        if (identifierInput) {
+            // Check on input with debounce
+            let timeout;
+            identifierInput.addEventListener('input', function() {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => {
+                    smartCapitalize(this);
+                }, 200);
+            });
+            
+            // Also check on blur (when user leaves the field)
+            identifierInput.addEventListener('blur', function() {
+                clearTimeout(timeout);
+                smartCapitalize(this);
+            });
+
+            // Check on paste
+            identifierInput.addEventListener('paste', function() {
+                setTimeout(() => {
+                    smartCapitalize(this);
+                }, 50);
+            });
+        }
+        
+        // Handle floating labels
         inputs.forEach(input => {
             // Check if input has value (for browser autofill)
             if (input.value !== '') {
                 const label = input.nextElementSibling;
-                if (label) {
+                if (label && label.tagName === 'LABEL') {
                     label.style.top = '0';
                     label.style.fontSize = '12px';
                     label.style.backgroundColor = 'white';
@@ -694,16 +813,19 @@ $pageTitle = 'BASS';
             // Handle focus event
             input.addEventListener('focus', function() {
                 const label = this.nextElementSibling;
-                label.style.top = '0';
-                label.style.fontSize = '12px';
-                label.style.backgroundColor = 'white';
-                label.style.color = '#CCB000';
+                if (label && label.tagName === 'LABEL') {
+                    label.style.top = '0';
+                    label.style.fontSize = '12px';
+                    label.style.backgroundColor = 'white';
+                    label.style.color = this.classList.contains('student-id') ? 
+                                        '#2563eb' : '#CCB000';
+                }
             });
             
             // Handle blur event
             input.addEventListener('blur', function() {
                 const label = this.nextElementSibling;
-                if (this.value === '') {
+                if (label && label.tagName === 'LABEL' && this.value === '') {
                     label.style.top = '50%';
                     label.style.fontSize = '16px';
                     label.style.backgroundColor = 'transparent';
@@ -717,11 +839,16 @@ $pageTitle = 'BASS';
             inputs.forEach(input => {
                 if (input.value !== '') {
                     const label = input.nextElementSibling;
-                    if (label) {
+                    if (label && label.tagName === 'LABEL') {
                         label.style.top = '0';
                         label.style.fontSize = '12px';
                         label.style.backgroundColor = 'white';
                         label.style.color = '#CCB000';
+                    }
+                    
+                    // Check if it's a student ID
+                    if (input.id === 'identifier') {
+                        smartCapitalize(input);
                     }
                 }
             });

@@ -4,7 +4,7 @@
 */
 
 if (!defined('BASEPATH')) {
-   define('BASEPATH', $_SERVER['DOCUMENT_ROOT'] . '/school_system');
+   define('BASEPATH', $_SERVER['DOCUMENT_ROOT']);
 }
 
 /**
@@ -73,7 +73,7 @@ function requireHTTPS() {
 function getBaseURL() {
    $protocol = isHTTPS() ? 'https://' : 'http://';
    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-   $baseDir = '/school_system';
+   $baseDir = '';
    return $protocol . $host . $baseDir;
 }
 

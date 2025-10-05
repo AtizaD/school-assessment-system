@@ -113,6 +113,8 @@ $sidebarItems = [
         ['url' => '/admin/generate_results.php', 'icon' => 'fa-chart-bar', 'text' => 'Get Result'],
         ['url' => '/admin/payment-dashboard.php', 'icon' => 'fa-credit-card', 'text' => 'Payment Management'],
         ['url' => '/admin/reset_passwords.php', 'icon' => 'fas fa-key', 'text' => 'Manage Password'],
+        ['url' => '/admin/promote_students.php', 'icon' => 'fa-level-up-alt', 'text' => 'Promote Students'],
+        ['url' => '/admin/view_archived_students.php', 'icon' => 'fa-archive', 'text' => 'Archived Students'],
         ['url' => '/admin/audit-logs.php', 'icon' => 'fa-history', 'text' => 'Audit Logs', 'category' => 'System']
     ],
     'teacher' => [
@@ -151,6 +153,20 @@ $roleTitle = [
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="refresh" content="300">
     <title><?php echo isset($pageTitle) ? htmlspecialchars($pageTitle) . ' - ' : ''; ?><?php echo SYSTEM_NAME; ?></title>
+
+    <!-- PWA Meta Tags -->
+    <meta name="description" content="School Assessment Management System - Take assessments, view results, and manage your academic progress">
+    <meta name="theme-color" content="#ffd700">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Assessment">
+    <link rel="manifest" href="<?php echo BASE_URL; ?>/manifest.json">
+
+    <!-- App Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="<?php echo BASE_URL; ?>/assets/images/icon-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="<?php echo BASE_URL; ?>/assets/images/icon-512x512.png">
+    <link rel="apple-touch-icon" href="<?php echo BASE_URL; ?>/assets/images/icon-192x192.png">
+
     <!-- Load KaTeX CSS first -->
     <link href="<?php echo BASE_URL; ?>/assets/maths/katex.min.css" rel="stylesheet">
     <link href="<?php echo BASE_URL; ?>/assets/css/bootstrap.min.css" rel="stylesheet">
@@ -504,6 +520,9 @@ $roleTitle = [
             }
         }
     </style>
+
+    <!-- PWA Install Prompt -->
+    <script src="<?php echo BASE_URL; ?>/assets/js/pwa-install.js" defer></script>
 </head>
 
 <body>
@@ -699,14 +718,54 @@ $roleTitle = [
         // Simple approach: Let Bootstrap handle all dropdowns naturally
         // No custom mobile handling - Bootstrap 5 handles responsive dropdowns well
     });
-    
+
     // Global semester switching function for teachers
     function changeGlobalSemester(semesterId) {
         // Get current URL and update semester parameter
         const currentUrl = new URL(window.location);
         currentUrl.searchParams.set('semester', semesterId);
-        
+
         // Redirect to updated URL
         window.location.href = currentUrl.toString();
+    }
+
+    // PWA Service Worker Registration
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            const swPath = '<?php echo BASE_URL; ?>/sw.js';
+            console.log('[PWA] Attempting to register service worker at:', swPath);
+
+            navigator.serviceWorker.register(swPath)
+                .then(registration => {
+                    console.log('[PWA] Service Worker registered successfully:', registration.scope);
+
+                    // Check for updates
+                    registration.addEventListener('updatefound', () => {
+                        const newWorker = registration.installing;
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                // New version available
+                                if (confirm('A new version is available. Reload to update?')) {
+                                    newWorker.postMessage({ type: 'SKIP_WAITING' });
+                                    window.location.reload();
+                                }
+                            }
+                        });
+                    });
+                })
+                .catch(error => {
+                    console.error('Service Worker registration failed:', error);
+                });
+
+            // Handle service worker messages
+            navigator.serviceWorker.addEventListener('message', (event) => {
+                if (event.data.type === 'SYNC_ANSWERS') {
+                    // Trigger answer sync if offline manager is available
+                    if (window.offlineManager) {
+                        window.offlineManager.syncAllPendingAnswers();
+                    }
+                }
+            });
+        });
     }
     </script>

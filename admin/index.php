@@ -235,6 +235,10 @@ require_once INCLUDES_PATH . '/bass/base_header.php';
                                 <i class="fas fa-paper-plane"></i>
                                 <span>Submit Assessment</span>
                             </a>
+                            <a href="assessment_participation.php" class="action-btn">
+                                <i class="fas fa-paper-plane"></i>
+                                <span>Assessment Participation</span>
+                            </a>
                         </div>
                     </div>
                 </div>

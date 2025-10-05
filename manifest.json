@@ -1,0 +1,42 @@
+{
+  "name": "School Assessment System",
+  "short_name": "Assessment",
+  "description": "School Assessment Management System - Take assessments, view results, and manage your academic progress",
+  "start_url": "/login.php",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#ffd700",
+  "orientation": "any",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/assets/images/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/images/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/assets/images/screenshot-mobile.png",
+      "sizes": "1080x1440",
+      "type": "image/png",
+      "label": "Assessment Dashboard - Mobile View"
+    },
+    {
+      "src": "/assets/images/screenshot-desktop.png",
+      "sizes": "2560x1440",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Assessment Dashboard - Desktop View"
+    }
+  ],
+  "categories": ["education", "productivity"],
+  "prefer_related_applications": false
+}

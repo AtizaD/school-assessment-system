@@ -984,7 +984,7 @@ require_once INCLUDES_PATH . '/bass/base_header.php';
                     }
                     echo $totalStudents;
                     ?>
-                </div>A
+                </div>
                 <div class="stat-label">Total Students</div>
             </div>
         </div>

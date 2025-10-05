@@ -150,21 +150,37 @@ function generateReportCardData($db, $studentId, $semesterId) {
     foreach ($subjects as $subject) {
         // Get assessment type breakdown for this subject
         $stmt = $db->prepare(
-            "SELECT 
+            "SELECT
                 COALESCE(at.type_name, 'Unassigned') as type_name,
                 COALESCE(at.weight_percentage, 0) as weight_percentage,
-                AVG(r.score) as average_score,
+                AVG(
+                    CASE
+                        WHEN r.status = 'completed' THEN
+                            (r.score /
+                                CASE
+                                    WHEN a.use_question_limit = 1 AND aa.question_order IS NOT NULL THEN
+                                        (SELECT SUM(q.max_score)
+                                         FROM questions q
+                                         WHERE FIND_IN_SET(q.question_id, REPLACE(REPLACE(REPLACE(aa.question_order, '[', ''), ']', ''), ' ', '')))
+                                    ELSE
+                                        (SELECT SUM(q.max_score) FROM questions q WHERE q.assessment_id = a.assessment_id)
+                                END
+                            ) * 100
+                        ELSE NULL
+                    END
+                ) as average_score,
                 COUNT(DISTINCT a.assessment_id) as total_assessments,
                 COUNT(DISTINCT CASE WHEN r.status = 'completed' THEN r.result_id END) as completed_assessments
              FROM assessments a
              JOIN assessmentclasses ac ON a.assessment_id = ac.assessment_id
              LEFT JOIN assessment_types at ON a.assessment_type_id = at.type_id
              LEFT JOIN results r ON a.assessment_id = r.assessment_id AND r.student_id = ?
+             LEFT JOIN assessmentattempts aa ON a.assessment_id = aa.assessment_id AND aa.student_id = ? AND aa.status = 'completed'
              WHERE ac.subject_id = ? AND ac.class_id = ? AND a.semester_id = ?
              GROUP BY COALESCE(at.type_name, 'Unassigned'), at.weight_percentage
              ORDER BY COALESCE(at.type_name, 'Unassigned')"
         );
-        $stmt->execute([$studentId, $subject['subject_id'], $subject['assessment_class_id'], $semesterId]);
+        $stmt->execute([$studentId, $studentId, $subject['subject_id'], $subject['assessment_class_id'], $semesterId]);
         $assessmentTypes = $stmt->fetchAll();
 
         // Calculate weighted score for the subject
@@ -213,22 +229,59 @@ function generateReportCardData($db, $studentId, $semesterId) {
         ];
     }
 
-    // Calculate overall GPA
-    $totalPoints = 0;
+    // Calculate overall average (no GPA)
     $subjectCount = 0;
     $totalScore = 0;
-    
+
     foreach ($subjectResults as $result) {
-        if ($result['final_score'] > 0) {
-            $totalPoints += $result['grade_point'];
+        if ($result['completed_assessments'] > 0) { // Only count subjects with completed assessments
             $totalScore += $result['final_score'];
             $subjectCount++;
         }
     }
-    
-    $gpa = $subjectCount > 0 ? round($totalPoints / $subjectCount, 2) : 0;
+
     $overallAverage = $subjectCount > 0 ? round($totalScore / $subjectCount, 1) : 0;
     $overallGrade = calculateGrade($overallAverage);
+
+    // Calculate class position/rank using percentage scores (accounting for question pooling)
+    $stmt = $db->prepare("
+        SELECT COUNT(*) + 1 as position
+        FROM (
+            SELECT s2.student_id,
+                   AVG(
+                       (r2.score /
+                           CASE
+                               WHEN a2.use_question_limit = 1 AND aa2.question_order IS NOT NULL THEN
+                                   (SELECT SUM(q.max_score)
+                                    FROM questions q
+                                    WHERE FIND_IN_SET(q.question_id, REPLACE(REPLACE(REPLACE(aa2.question_order, '[', ''), ']', ''), ' ', '')))
+                               ELSE
+                                   (SELECT SUM(q.max_score) FROM questions q WHERE q.assessment_id = a2.assessment_id)
+                           END
+                       ) * 100
+                   ) as avg_score
+            FROM students s2
+            JOIN results r2 ON s2.student_id = r2.student_id
+            JOIN assessments a2 ON r2.assessment_id = a2.assessment_id
+            LEFT JOIN assessmentattempts aa2 ON a2.assessment_id = aa2.assessment_id AND aa2.student_id = s2.student_id AND aa2.status = 'completed'
+            WHERE s2.class_id = ? AND a2.semester_id = ? AND r2.status = 'completed'
+            GROUP BY s2.student_id
+            HAVING avg_score > ?
+        ) ranked_students
+    ");
+    $stmt->execute([$student['class_id'], $semesterId, $overallAverage]);
+    $position = $stmt->fetch();
+
+    // Get total students in class with results
+    $stmt = $db->prepare("
+        SELECT COUNT(DISTINCT s.student_id) as total
+        FROM students s
+        JOIN results r ON s.student_id = r.student_id
+        JOIN assessments a ON r.assessment_id = a.assessment_id
+        WHERE s.class_id = ? AND a.semester_id = ? AND r.status = 'completed'
+    ");
+    $stmt->execute([$student['class_id'], $semesterId]);
+    $totalInClass = $stmt->fetch();
 
     return [
         'student' => $student,
@@ -236,10 +289,12 @@ function generateReportCardData($db, $studentId, $semesterId) {
         'subjects' => $subjectResults,
         'summary' => [
             'total_subjects' => count($subjectResults),
-            'gpa' => $gpa,
+            'subjects_with_grades' => $subjectCount,
             'overall_average' => $overallAverage,
             'overall_grade' => $overallGrade['grade'],
-            'overall_remarks' => $overallGrade['remarks']
+            'overall_remarks' => $overallGrade['remarks'],
+            'class_position' => $position['position'] ?? 0,
+            'total_in_class' => $totalInClass['total'] ?? 0
         ]
     ];
 }
@@ -383,11 +438,18 @@ function generateSingleReportCardPDFContent($data) {
     
     $pdf->AddPage();
     
-    // School header
-    $pdf->SetFont('helvetica', 'B', 16);
-    $pdf->Cell(0, 10, SYSTEM_NAME, 0, 1, 'C');
+    // School header with gold theme
+    $pdf->SetFillColor(255, 215, 0); // Gold
+    $pdf->SetTextColor(0, 0, 0); // Black
+    $pdf->SetFont('helvetica', 'B', 18);
+    $pdf->Cell(0, 12, SYSTEM_NAME, 0, 1, 'C', true);
+
+    $pdf->SetFillColor(0, 0, 0); // Black
+    $pdf->SetTextColor(255, 215, 0); // Gold
     $pdf->SetFont('helvetica', 'B', 14);
-    $pdf->Cell(0, 8, 'STUDENT REPORT CARD', 0, 1, 'C');
+    $pdf->Cell(0, 10, 'STUDENT REPORT CARD', 0, 1, 'C', true);
+
+    $pdf->SetTextColor(0, 0, 0); // Reset to black
     $pdf->Ln(5);
     
     // Student information
@@ -453,19 +515,19 @@ function generateSingleReportCardPDFContent($data) {
     $pdf->SetFont('helvetica', 'B', 11);
     $pdf->Cell(40, 6, $summary['total_subjects'], 0, 0, 'L');
     $pdf->SetFont('helvetica', '', 11);
-    $pdf->Cell(30, 6, 'GPA:', 0, 0, 'L');
+    $pdf->Cell(30, 6, 'Overall Average:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(0, 6, $summary['gpa'], 0, 1, 'L');
-    
+    $pdf->Cell(0, 6, $summary['overall_average'] . '%', 0, 1, 'L');
+
     $pdf->SetFont('helvetica', '', 11);
-    $pdf->Cell(50, 6, 'Overall Average:', 0, 0, 'L');
+    $pdf->Cell(50, 6, 'Overall Grade:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(40, 6, $summary['overall_average'] . '%', 0, 0, 'L');
+    $pdf->Cell(40, 6, $summary['overall_grade'], 0, 0, 'L');
     $pdf->SetFont('helvetica', '', 11);
-    $pdf->Cell(30, 6, 'Overall Grade:', 0, 0, 'L');
+    $pdf->Cell(30, 6, 'Class Position:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(0, 6, $summary['overall_grade'], 0, 1, 'L');
-    
+    $pdf->Cell(0, 6, $summary['class_position'] . ' of ' . $summary['total_in_class'], 0, 1, 'L');
+
     $pdf->SetFont('helvetica', '', 11);
     $pdf->Cell(50, 6, 'Remarks:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
@@ -502,11 +564,18 @@ function generateReportCardPDF($data) {
     
     $pdf->AddPage();
     
-    // School header
-    $pdf->SetFont('helvetica', 'B', 16);
-    $pdf->Cell(0, 10, SYSTEM_NAME, 0, 1, 'C');
+    // School header with gold theme
+    $pdf->SetFillColor(255, 215, 0); // Gold
+    $pdf->SetTextColor(0, 0, 0); // Black
+    $pdf->SetFont('helvetica', 'B', 18);
+    $pdf->Cell(0, 12, SYSTEM_NAME, 0, 1, 'C', true);
+
+    $pdf->SetFillColor(0, 0, 0); // Black
+    $pdf->SetTextColor(255, 215, 0); // Gold
     $pdf->SetFont('helvetica', 'B', 14);
-    $pdf->Cell(0, 8, 'STUDENT REPORT CARD', 0, 1, 'C');
+    $pdf->Cell(0, 10, 'STUDENT REPORT CARD', 0, 1, 'C', true);
+
+    $pdf->SetTextColor(0, 0, 0); // Reset to black
     $pdf->Ln(5);
     
     // Student information
@@ -572,19 +641,19 @@ function generateReportCardPDF($data) {
     $pdf->SetFont('helvetica', 'B', 11);
     $pdf->Cell(40, 6, $summary['total_subjects'], 0, 0, 'L');
     $pdf->SetFont('helvetica', '', 11);
-    $pdf->Cell(30, 6, 'GPA:', 0, 0, 'L');
+    $pdf->Cell(30, 6, 'Overall Average:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(0, 6, $summary['gpa'], 0, 1, 'L');
-    
+    $pdf->Cell(0, 6, $summary['overall_average'] . '%', 0, 1, 'L');
+
     $pdf->SetFont('helvetica', '', 11);
-    $pdf->Cell(50, 6, 'Overall Average:', 0, 0, 'L');
+    $pdf->Cell(50, 6, 'Overall Grade:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(40, 6, $summary['overall_average'] . '%', 0, 0, 'L');
+    $pdf->Cell(40, 6, $summary['overall_grade'], 0, 0, 'L');
     $pdf->SetFont('helvetica', '', 11);
-    $pdf->Cell(30, 6, 'Overall Grade:', 0, 0, 'L');
+    $pdf->Cell(30, 6, 'Class Position:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
-    $pdf->Cell(0, 6, $summary['overall_grade'], 0, 1, 'L');
-    
+    $pdf->Cell(0, 6, $summary['class_position'] . ' of ' . $summary['total_in_class'], 0, 1, 'L');
+
     $pdf->SetFont('helvetica', '', 11);
     $pdf->Cell(50, 6, 'Remarks:', 0, 0, 'L');
     $pdf->SetFont('helvetica', 'B', 11);
@@ -658,7 +727,8 @@ require_once INCLUDES_PATH . '/bass/base_header.php';
                                 <select name="class_id" id="class_id_individual" class="form-select" required>
                                     <option value="">Choose a class...</option>
                                     <?php foreach ($classes as $class): ?>
-                                        <option value="<?php echo $class['class_id']; ?>">
+                                        <option value="<?php echo $class['class_id']; ?>"
+                                            <?php if ($reportCardData && $reportCardData['student']['class_id'] == $class['class_id']) echo 'selected'; ?>>
                                             <?php echo htmlspecialchars($class['program_name'] . ' - ' . $class['class_name']); ?>
                                         </option>
                                     <?php endforeach; ?>
@@ -678,7 +748,13 @@ require_once INCLUDES_PATH . '/bass/base_header.php';
                                     <option value="">Choose a semester...</option>
                                     <?php foreach ($semesters as $semester): ?>
                                         <option value="<?php echo $semester['semester_id']; ?>"
-                                            <?php if ($currentSemester && $currentSemester['semester_id'] == $semester['semester_id']) echo 'selected'; ?>>
+                                            <?php
+                                            if ($reportCardData && $reportCardData['semester']['semester_id'] == $semester['semester_id']) {
+                                                echo 'selected';
+                                            } elseif (!$reportCardData && $currentSemester && $currentSemester['semester_id'] == $semester['semester_id']) {
+                                                echo 'selected';
+                                            }
+                                            ?>>
                                             <?php echo htmlspecialchars($semester['semester_name']); ?>
                                         </option>
                                     <?php endforeach; ?>
@@ -844,14 +920,14 @@ require_once INCLUDES_PATH . '/bass/base_header.php';
                             <p class="mb-1"><strong>Overall Average:</strong> <?php echo $reportCardData['summary']['overall_average']; ?>%</p>
                         </div>
                         <div class="col-sm-6">
-                            <p class="mb-1"><strong>GPA:</strong> <?php echo $reportCardData['summary']['gpa']; ?></p>
-                            <p class="mb-1"><strong>Overall Grade:</strong> 
+                            <p class="mb-1"><strong>Overall Grade:</strong>
                                 <span class="badge bg-primary"><?php echo $reportCardData['summary']['overall_grade']; ?></span>
                             </p>
+                            <p class="mb-1"><strong>Class Position:</strong> <?php echo $reportCardData['summary']['class_position'] . ' of ' . $reportCardData['summary']['total_in_class']; ?></p>
                         </div>
                     </div>
-                    <p class="mb-0"><strong>Remarks:</strong> 
-                        <span class="<?php echo $reportCardData['summary']['gpa'] >= 2.0 ? 'text-success' : 'text-danger'; ?>">
+                    <p class="mb-0"><strong>Remarks:</strong>
+                        <span class="text-primary">
                             <?php echo $reportCardData['summary']['overall_remarks']; ?>
                         </span>
                     </p>
@@ -859,8 +935,8 @@ require_once INCLUDES_PATH . '/bass/base_header.php';
                 <div class="col-md-4 text-center">
                     <div class="card bg-light">
                         <div class="card-body">
-                            <h2 class="display-4 text-primary mb-0"><?php echo $reportCardData['summary']['gpa']; ?></h2>
-                            <p class="text-muted mb-0">Grade Point Average</p>
+                            <h2 class="display-4 text-primary mb-0"><?php echo $reportCardData['summary']['overall_average']; ?>%</h2>
+                            <p class="text-muted mb-0">Overall Average</p>
                         </div>
                     </div>
                 </div>
@@ -880,8 +956,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Individual report card elements
     const classSelectIndividual = document.getElementById('class_id_individual');
     const studentSelect = document.getElementById('student_id');
-    
-    // Bulk report card elements  
+
+    // Bulk report card elements
     const classSelectBulk = document.getElementById('class_id_bulk');
     const previewBulkBtn = document.getElementById('previewBulkBtn');
     const bulkPdfBtn = document.getElementById('bulkPdfBtn');
@@ -889,25 +965,26 @@ document.addEventListener('DOMContentLoaded', function() {
     const studentListContent = document.getElementById('studentListContent');
 
     // Load students for individual report card
-    classSelectIndividual.addEventListener('change', function() {
-        const classId = this.value;
-        
+    function loadStudents(classId, selectedStudentId = null) {
         if (classId) {
             studentSelect.disabled = true;
             studentSelect.innerHTML = '<option value="">Loading students...</option>';
-            
+
             fetch(`../api/get_students.php?class_id=${classId}`)
                 .then(response => response.json())
                 .then(data => {
                     studentSelect.innerHTML = '<option value="">Select a student...</option>';
-                    
+
                     data.forEach(student => {
                         const option = document.createElement('option');
                         option.value = student.student_id;
                         option.textContent = `${student.last_name}, ${student.first_name}`;
+                        if (selectedStudentId && student.student_id == selectedStudentId) {
+                            option.selected = true;
+                        }
                         studentSelect.appendChild(option);
                     });
-                    
+
                     studentSelect.disabled = false;
                 })
                 .catch(error => {
@@ -917,7 +994,16 @@ document.addEventListener('DOMContentLoaded', function() {
             studentSelect.innerHTML = '<option value="">Select class first...</option>';
             studentSelect.disabled = true;
         }
+    }
+
+    classSelectIndividual.addEventListener('change', function() {
+        loadStudents(this.value);
     });
+
+    // If there's a selected class on page load (after form submission), load its students
+    <?php if ($reportCardData && $selectedStudent): ?>
+    loadStudents(<?php echo $reportCardData['student']['class_id']; ?>, <?php echo $selectedStudent; ?>);
+    <?php endif; ?>
 
     // Preview student list for bulk generation
     previewBulkBtn.addEventListener('click', function() {

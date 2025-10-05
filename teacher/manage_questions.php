@@ -160,6 +160,11 @@ if (isset($_SESSION['success'])) {
     unset($_SESSION['success']);
 }
 
+// Clear any stale error messages from session
+if (isset($_SESSION['error'])) {
+    unset($_SESSION['error']);
+}
+
 $pageTitle = 'Manage Questions';
 require_once INCLUDES_PATH . '/bass/base_header.php';
 ?>

@@ -1,656 +1,866 @@
 <?php
-// admin/performance_dashboard.php
-ob_start(); // Start output buffering at the very beginning
+/**
+ * Comprehensive Academic Performance Report Dashboard
+ * Complete replacement with enhanced analytics
+ */
 
 define('BASEPATH', dirname(__DIR__));
-require_once BASEPATH . '/vendor/autoload.php';
 require_once BASEPATH . '/config/config.php';
 require_once INCLUDES_PATH . '/functions.php';
 require_once INCLUDES_PATH . '/auth.php';
 
-// Only admin and teachers can access this page
-requireRole(['admin', 'teacher']);
+requireRole('admin');
 
-// Handle filters
-$filters = [];
-$filterApplied = false;
-$exportRequested = false;
+// Handle PDF export
+if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
+    require_once BASEPATH . '/vendor/autoload.php';
+
+    $semester_id = filter_input(INPUT_GET, 'semester_id', FILTER_VALIDATE_INT);
+    $class_id = filter_input(INPUT_GET, 'class_id', FILTER_VALIDATE_INT);
+    $subject_id = filter_input(INPUT_GET, 'subject_id', FILTER_VALIDATE_INT);
+    $level = isset($_GET['level']) ? trim($_GET['level']) : '';
+    $assessment_type_id = filter_input(INPUT_GET, 'assessment_type_id', FILTER_VALIDATE_INT);
+
+    // Get database connection
+    $db = DatabaseConfig::getInstance()->getConnection();
+
+    // Get current semester if none selected
+    if (!$semester_id) {
+        $stmt = $db->query("SELECT semester_id FROM semesters
+                           WHERE CURDATE() BETWEEN start_date AND end_date
+                           ORDER BY start_date DESC LIMIT 1");
+        $current = $stmt->fetch();
+        if (!$current) {
+            $stmt = $db->query("SELECT semester_id FROM semesters ORDER BY start_date DESC LIMIT 1");
+            $current = $stmt->fetch();
+        }
+        $semester_id = $current ? $current['semester_id'] : null;
+    }
+
+    if (!$semester_id) {
+        die('No semester data available for export.');
+    }
+
+    // Get filter names for display
+    $stmt = $db->prepare("SELECT semester_name FROM semesters WHERE semester_id = ?");
+    $stmt->execute([$semester_id]);
+    $semester_name = $stmt->fetchColumn();
+
+    $filter_text = "Semester: " . $semester_name;
+    if ($level) $filter_text .= " | Level: " . $level;
+    if ($class_id) {
+        $stmt = $db->prepare("SELECT CONCAT(p.program_name, ' - ', c.class_name) FROM classes c JOIN programs p ON c.program_id = p.program_id WHERE c.class_id = ?");
+        $stmt->execute([$class_id]);
+        $filter_text .= " | Class: " . $stmt->fetchColumn();
+    }
+    if ($subject_id) {
+        $stmt = $db->prepare("SELECT subject_name FROM subjects WHERE subject_id = ?");
+        $stmt->execute([$subject_id]);
+        $filter_text .= " | Subject: " . $stmt->fetchColumn();
+    }
+    if ($assessment_type_id) {
+        $stmt = $db->prepare("SELECT type_name FROM assessment_types WHERE type_id = ?");
+        $stmt->execute([$assessment_type_id]);
+        $filter_text .= " | Type: " . $stmt->fetchColumn();
+    }
+
+    require_once BASEPATH . '/admin/export_performance_pdf.php';
+    exit;
+}
+
+$error = '';
+$semester_id = filter_input(INPUT_GET, 'semester_id', FILTER_VALIDATE_INT);
+$class_id = filter_input(INPUT_GET, 'class_id', FILTER_VALIDATE_INT);
+$subject_id = filter_input(INPUT_GET, 'subject_id', FILTER_VALIDATE_INT);
+$level = isset($_GET['level']) ? trim($_GET['level']) : '';
+$assessment_type_id = filter_input(INPUT_GET, 'assessment_type_id', FILTER_VALIDATE_INT);
 
 try {
     $db = DatabaseConfig::getInstance()->getConnection();
 
-    // Get all classes for dropdown
-    $stmt = $db->prepare("SELECT c.class_id, c.class_name, c.level, p.program_name 
-                         FROM classes c JOIN programs p ON c.program_id = p.program_id 
-                         ORDER BY p.program_name, c.level, c.class_name");
-    $stmt->execute();
-    $classes = $stmt->fetchAll();
-
-    // Get all unique levels for dropdown
-    $stmt = $db->prepare("SELECT DISTINCT level FROM classes ORDER BY level");
-    $stmt->execute();
-    $levels = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-    // Get all subjects for dropdown
-    $stmt = $db->prepare("SELECT subject_id, subject_name FROM subjects ORDER BY subject_name");
-    $stmt->execute();
-    $subjects = $stmt->fetchAll();
-
-    // Get all semesters for dropdown
-    $stmt = $db->prepare("SELECT semester_id, semester_name FROM semesters ORDER BY start_date DESC");
-    $stmt->execute();
+    // Get filter options
+    $stmt = $db->query("SELECT semester_id, semester_name FROM semesters ORDER BY start_date DESC");
     $semesters = $stmt->fetchAll();
 
-    // Get current/active semester
-    $stmt = $db->prepare(
-        "SELECT semester_id, semester_name FROM semesters 
-         WHERE CURDATE() BETWEEN start_date AND end_date 
-         ORDER BY start_date DESC LIMIT 1"
-    );
-    $stmt->execute();
-    $currentSemester = $stmt->fetch();
-    $currentSemesterId = $currentSemester ? $currentSemester['semester_id'] : null;
+    $stmt = $db->query("SELECT c.class_id, c.class_name, c.level, p.program_name
+                        FROM classes c JOIN programs p ON c.program_id = p.program_id
+                        ORDER BY c.level, p.program_name, c.class_name");
+    $classes = $stmt->fetchAll();
+
+    // Get subjects with their associated class IDs
+    $stmt = $db->query("
+        SELECT s.subject_id, s.subject_name,
+               GROUP_CONCAT(DISTINCT cs.class_id ORDER BY cs.class_id) as class_ids
+        FROM subjects s
+        LEFT JOIN classsubjects cs ON s.subject_id = cs.subject_id
+        GROUP BY s.subject_id, s.subject_name
+        ORDER BY s.subject_name
+    ");
+    $subjects = $stmt->fetchAll();
+
+    $stmt = $db->query("SELECT type_id, type_name FROM assessment_types WHERE is_active = 1 ORDER BY sort_order");
+    $assessment_types = $stmt->fetchAll();
+
+    $stmt = $db->query("SELECT DISTINCT level FROM classes ORDER BY level");
+    $levels = $stmt->fetchAll();
+
+    // Get current semester if none selected
+    if (!$semester_id) {
+        $stmt = $db->query("SELECT semester_id FROM semesters
+                           WHERE CURDATE() BETWEEN start_date AND end_date
+                           ORDER BY start_date DESC LIMIT 1");
+        $current = $stmt->fetch();
+        $semester_id = $current ? $current['semester_id'] : ($semesters[0]['semester_id'] ?? null);
+    }
+
 } catch (Exception $e) {
     logError("Performance dashboard error: " . $e->getMessage());
-    $error = "Error loading data: " . $e->getMessage();
+    $error = "Error loading dashboard: " . $e->getMessage();
 }
 
-$pageTitle = 'Student Performance Dashboard';
+$pageTitle = 'Academic Performance Reports';
 require_once INCLUDES_PATH . '/bass/base_header.php';
 ?>
 
-<main class="container-fluid px-4">
+<style>
+.stat-card {
+    border-left: 4px solid #ffd700;
+    transition: transform 0.2s;
+}
+.stat-card:hover {
+    transform: translateY(-5px);
+}
+.report-section {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+.section-header {
+    background: linear-gradient(135deg, #000000 0%, #1a1a1a 100%);
+    color: #ffd700;
+    padding: 15px 20px;
+    border-radius: 8px 8px 0 0;
+}
+.performance-badge {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+.badge-excellent { background: #28a745; color: white; }
+.badge-good { background: #17a2b8; color: white; }
+.badge-average { background: #ffc107; color: #000; }
+.badge-poor { background: #dc3545; color: white; }
+</style>
+
+<main class="container-fluid px-4 py-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3 text-warning mb-0">Student Performance Dashboard</h1>
+        <h1 class="h3 mb-0" style="color: #ffd700;">📊 Academic Performance Reports</h1>
+        <div>
+            <button class="btn btn-warning" onclick="window.print()">
+                <i class="fas fa-print me-2"></i>Print
+            </button>
+            <a href="?<?= http_build_query(array_merge($_GET, ['export' => 'pdf'])) ?>" class="btn btn-danger">
+                <i class="fas fa-file-pdf me-2"></i>Export to PDF
+            </a>
+        </div>
     </div>
 
-    <?php if (isset($error)): ?>
-        <div class="alert alert-danger">
-            <?php echo $error; ?>
-        </div>
+    <?php if ($error): ?>
+        <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
 
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header" style="background: linear-gradient(145deg, #2c3e50 0%, #34495e 100%);">
-            <h5 class="card-title mb-0 text-warning">Filter Options</h5>
+    <!-- Filters -->
+    <div class="report-section mb-4">
+        <div class="section-header">
+            <h5 class="mb-0"><i class="fas fa-filter me-2"></i>Report Filters</h5>
         </div>
-        <div class="card-body">
-            <form method="get" action="" id="filterForm">
-                <div class="row g-3">
-                    <div class="col-md-3">
-                        <label for="level" class="form-label">Level</label>
-                        <select name="level" id="level" class="form-select">
-                            <option value="">All Levels</option>
-                            <?php foreach ($levels as $level): ?>
-                                <option value="<?php echo htmlspecialchars($level); ?>">
-                                    <?php echo htmlspecialchars($level); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="col-md-3">
-                        <label for="class_id" class="form-label">Class</label>
-                        <select name="class_id" id="class_id" class="form-select">
-                            <option value="">All Classes</option>
-                            <?php foreach ($classes as $class): ?>
-                                <option value="<?php echo $class['class_id']; ?>" 
-                                        data-level="<?php echo htmlspecialchars($class['level']); ?>">
-                                    <?php echo htmlspecialchars($class['program_name'] . ' - ' . $class['class_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="col-md-3">
-                        <label for="subject_id" class="form-label">Subject</label>
-                        <select name="subject_id" id="subject_id" class="form-select">
-                            <option value="">All Subjects</option>
-                            <?php foreach ($subjects as $subject): ?>
-                                <option value="<?php echo $subject['subject_id']; ?>">
-                                    <?php echo htmlspecialchars($subject['subject_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="col-md-3">
-                        <label for="semester_id" class="form-label">Semester</label>
-                        <select name="semester_id" id="semester_id" class="form-select">
-                            <option value="">All Semesters</option>
-                            <?php foreach ($semesters as $semester): ?>
-                                <option value="<?php echo $semester['semester_id']; ?>"
-                                    <?php if ($currentSemesterId == $semester['semester_id']) echo 'selected'; ?>>
-                                    <?php echo htmlspecialchars($semester['semester_name']); ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div class="col-12">
-                        <button type="button" id="applyFilters" class="btn btn-warning">
-                            <i class="fas fa-filter me-1"></i>Apply Filters
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary ms-2" id="resetBtn">
-                            <i class="fas fa-undo me-1"></i>Reset Filters
-                        </button>
-                        <button type="button" class="btn btn-success ms-2" id="exportPdfBtn">
-                            <i class="fas fa-file-pdf me-1"></i>Export to PDF
-                        </button>
-                    </div>
+        <div class="p-4">
+            <form method="GET" class="row g-3" id="filterForm">
+                <div class="col-md-3">
+                    <label class="form-label">Semester</label>
+                    <select name="semester_id" class="form-select" onchange="this.form.submit()">
+                        <?php foreach ($semesters as $sem): ?>
+                            <option value="<?= $sem['semester_id'] ?>" <?= $semester_id == $sem['semester_id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($sem['semester_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Level</label>
+                    <select name="level" class="form-select" id="levelFilter" onchange="filterClasses(); this.form.submit();">
+                        <option value="">All Levels</option>
+                        <?php foreach ($levels as $lvl): ?>
+                            <option value="<?= htmlspecialchars($lvl['level']) ?>" <?= $level == $lvl['level'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($lvl['level']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Class</label>
+                    <select name="class_id" class="form-select" id="classFilter" onchange="filterSubjects(); this.form.submit();">
+                        <option value="">All Classes</option>
+                        <?php foreach ($classes as $class): ?>
+                            <option value="<?= $class['class_id'] ?>"
+                                    data-level="<?= htmlspecialchars($class['level'] ?? '') ?>"
+                                    <?= $class_id == $class['class_id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($class['program_name'] . ' - ' . $class['class_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Subject</label>
+                    <select name="subject_id" class="form-select" id="subjectFilter" onchange="this.form.submit()">
+                        <option value="">All Subjects</option>
+                        <?php foreach ($subjects as $subject): ?>
+                            <option value="<?= $subject['subject_id'] ?>"
+                                    data-classes="<?= htmlspecialchars($subject['class_ids'] ?? '') ?>"
+                                    <?= $subject_id == $subject['subject_id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($subject['subject_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Assessment Type</label>
+                    <select name="assessment_type_id" class="form-select" onchange="this.form.submit()">
+                        <option value="">All Types</option>
+                        <?php foreach ($assessment_types as $type): ?>
+                            <option value="<?= $type['type_id'] ?>" <?= $assessment_type_id == $type['type_id'] ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($type['type_name']) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
                 </div>
             </form>
         </div>
     </div>
 
-    <div class="row" id="summaryStats">
-        <div class="col-lg-3 col-md-6 mb-4">
-            <div class="card border-0 shadow-sm bg-primary text-white">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-users me-2"></i>Total Students</h5>
-                    <h2 class="display-4 mb-0" id="totalStudentsCount">-</h2>
+    <?php if ($semester_id): ?>
+
+    <!-- Section 1: Semester Performance Overview -->
+    <?php
+    $where = ["a.semester_id = ?"];
+    $params = [$semester_id];
+    $joins = "JOIN assessmentclasses ac ON a.assessment_id = ac.assessment_id";
+
+    if ($level) {
+        $joins .= " JOIN classes cls ON ac.class_id = cls.class_id";
+        $where[] = "cls.level = ?";
+        $params[] = $level;
+    }
+    if ($class_id) {
+        $where[] = "ac.class_id = ?";
+        $params[] = $class_id;
+    }
+    if ($subject_id) {
+        $where[] = "ac.subject_id = ?";
+        $params[] = $subject_id;
+    }
+    if ($assessment_type_id) {
+        $where[] = "a.assessment_type_id = ?";
+        $params[] = $assessment_type_id;
+    }
+    $whereClause = implode(' AND ', $where);
+
+    $stmt = $db->prepare("
+        SELECT
+            COUNT(DISTINCT a.assessment_id) as total_assessments,
+            COUNT(DISTINCT r.result_id) as total_submissions,
+            COUNT(DISTINCT CASE WHEN r.status = 'completed' THEN r.result_id END) as completed_submissions,
+            ROUND(AVG(CASE WHEN r.status = 'completed' THEN r.score END), 2) as avg_score,
+            MIN(CASE WHEN r.status = 'completed' THEN r.score END) as min_score,
+            MAX(CASE WHEN r.status = 'completed' THEN r.score END) as max_score,
+            COUNT(DISTINCT CASE WHEN r.status = 'completed' AND r.score >= 10 THEN r.result_id END) as passed,
+            COUNT(DISTINCT CASE WHEN r.status = 'completed' AND r.score < 10 THEN r.result_id END) as failed
+        FROM assessments a
+        $joins
+        LEFT JOIN results r ON a.assessment_id = r.assessment_id AND r.status = 'completed'
+        WHERE $whereClause
+    ");
+    $stmt->execute($params);
+    $overview = $stmt->fetch();
+    $pass_rate = $overview['completed_submissions'] > 0 ?
+        round(($overview['passed'] / $overview['completed_submissions']) * 100, 1) : 0;
+    ?>
+
+    <div class="report-section">
+        <div class="section-header">
+            <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>1. Semester Performance Overview</h5>
+        </div>
+        <div class="p-4">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <div class="stat-card p-3 bg-light">
+                        <div class="text-muted small">Total Assessments</div>
+                        <h3 class="mb-0"><?= $overview['total_assessments'] ?></h3>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-card p-3 bg-light">
+                        <div class="text-muted small">Completed Submissions</div>
+                        <h3 class="mb-0"><?= $overview['completed_submissions'] ?></h3>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="stat-card p-3 bg-light">
+                        <div class="text-muted small">Pass Rate</div>
+                        <h3 class="mb-0 <?= $pass_rate >= 70 ? 'text-success' : ($pass_rate >= 50 ? 'text-warning' : 'text-danger') ?>">
+                            <?= $pass_rate ?>%
+                        </h3>
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="col-lg-3 col-md-6 mb-4">
-            <div class="card border-0 shadow-sm bg-success text-white">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-book me-2"></i>Subjects</h5>
-                    <h2 class="display-4 mb-0" id="totalSubjectsCount">-</h2>
+
+            <div class="row mt-4">
+                <div class="col-md-4">
+                    <canvas id="passFailChart" style="max-height: 250px;"></canvas>
                 </div>
-            </div>
-        </div>
-        <div class="col-lg-3 col-md-6 mb-4">
-            <div class="card border-0 shadow-sm bg-info text-white">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-file-alt me-2"></i>Assessments</h5>
-                    <h2 class="display-4 mb-0" id="totalAssessmentsCount">-</h2>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-3 col-md-6 mb-4">
-            <div class="card border-0 shadow-sm bg-warning text-dark">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-chart-line me-2"></i>Avg. Score</h5>
-                    <h2 class="display-4 mb-0" id="overallAvgScore">-</h2>
-                </div>
-            </div>
-        </div>
-        <div class="col-lg-12 mb-4">
-            <div class="card border-0 shadow-sm bg-secondary text-white">
-                <div class="card-body">
-                    <h5 class="card-title"><i class="fas fa-tasks me-2"></i>Assessment Types Active</h5>
-                    <h2 class="display-4 mb-0" id="totalAssessmentTypesCount">-</h2>
+                <div class="col-md-8">
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <tr><th>Metric</th><th>Value</th></tr>
+                            <tr><td>Minimum Score</td><td><?= $overview['min_score'] ?? 'N/A' ?>%</td></tr>
+                            <tr><td>Maximum Score</td><td><?= $overview['max_score'] ?? 'N/A' ?>%</td></tr>
+                            <tr><td>Passed</td><td class="text-success"><?= $overview['passed'] ?></td></tr>
+                            <tr><td>Failed</td><td class="text-danger"><?= $overview['failed'] ?></td></tr>
+                            <tr><td>Completion Rate</td><td>
+                                <?= $overview['total_submissions'] > 0 ?
+                                    round(($overview['completed_submissions'] / $overview['total_submissions']) * 100, 1) : 0 ?>%
+                            </td></tr>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Top Performers Section -->
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header" style="background: linear-gradient(145deg, #2c3e50 0%, #34495e 100%);">
-            <h5 class="card-title mb-0 text-warning">Top Performers by Subject</h5>
+    <!-- Section 2: Class Performance Comparison -->
+    <?php
+    $whereClass = ["a.semester_id = ?"];
+    $paramsClass = [$semester_id];
+    if ($subject_id) {
+        $whereClass[] = "ac.subject_id = ?";
+        $paramsClass[] = $subject_id;
+    }
+    if ($level) {
+        $whereClass[] = "c.level = ?";
+        $paramsClass[] = $level;
+    }
+    if ($assessment_type_id) {
+        $whereClass[] = "a.assessment_type_id = ?";
+        $paramsClass[] = $assessment_type_id;
+    }
+    $whereClassClause = implode(' AND ', $whereClass);
+
+    $stmt = $db->prepare("
+        SELECT
+            c.class_id,
+            p.program_name,
+            c.class_name,
+            COUNT(DISTINCT s.student_id) as total_students,
+            COUNT(r.result_id) as total_submissions,
+            COUNT(CASE WHEN r.status = 'completed' THEN 1 END) as completed_submissions,
+            ROUND(AVG(CASE WHEN r.status = 'completed' THEN r.score END), 2) as avg_score,
+            COUNT(CASE WHEN r.status = 'completed' AND r.score >= 10 THEN 1 END) as passed,
+            COUNT(CASE WHEN r.status = 'completed' AND r.score < 10 THEN 1 END) as failed
+        FROM classes c
+        JOIN programs p ON c.program_id = p.program_id
+        LEFT JOIN students s ON c.class_id = s.class_id
+        LEFT JOIN assessmentclasses ac ON c.class_id = ac.class_id AND ac.class_id = c.class_id
+        LEFT JOIN assessments a ON ac.assessment_id = a.assessment_id
+        LEFT JOIN results r ON s.student_id = r.student_id AND r.assessment_id = a.assessment_id AND r.status = 'completed'
+        WHERE $whereClassClause
+        GROUP BY c.class_id, p.program_name, c.class_name
+        HAVING completed_submissions >= 50
+        ORDER BY avg_score DESC
+    ");
+    $stmt->execute($paramsClass);
+    $classPerformance = $stmt->fetchAll();
+    ?>
+
+    <div class="report-section">
+        <div class="section-header">
+            <h5 class="mb-0"><i class="fas fa-school me-2"></i>2. Class Performance Comparison</h5>
         </div>
-        <div class="card-body">
-            <div class="table-responsive" id="topPerformersContainer">
-                <p class="text-center py-3">Select filters and apply to see top performers.</p>
+        <div class="p-4">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Rank</th>
+                            <th>Program</th>
+                            <th>Class</th>
+                            <th>Students</th>
+                            <th>Submissions</th>
+                            <th>Avg Score</th>
+                            <th>Pass Rate</th>
+                            <th>Performance</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($classPerformance as $idx => $class):
+                            $class_pass_rate = $class['completed_submissions'] > 0 ?
+                                round((($class['passed']) / $class['completed_submissions']) * 100, 1) : 0;
+                            $perfClass = $class['avg_score'] >= 70 ? 'badge-excellent' :
+                                        ($class['avg_score'] >= 50 ? 'badge-good' :
+                                        ($class['avg_score'] >= 30 ? 'badge-average' : 'badge-poor'));
+                        ?>
+                        <tr>
+                            <td><?= $idx + 1 ?></td>
+                            <td><?= htmlspecialchars($class['program_name']) ?></td>
+                            <td><?= htmlspecialchars($class['class_name']) ?></td>
+                            <td><?= $class['total_students'] ?></td>
+                            <td><?= $class['total_submissions'] ?></td>
+                            <td><strong><?= $class['avg_score'] ?>%</strong></td>
+                            <td><?= $class_pass_rate ?>%</td>
+                            <td>
+                                <span class="performance-badge <?= $perfClass ?>">
+                                    <?= $class['avg_score'] >= 70 ? 'Excellent' :
+                                       ($class['avg_score'] >= 50 ? 'Good' :
+                                       ($class['avg_score'] >= 30 ? 'Average' : 'Needs Improvement')) ?>
+                                </span>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 
-    <!-- Class Performance Section -->
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header" style="background: linear-gradient(145deg, #2c3e50 0%, #34495e 100%);">
-            <h5 class="card-title mb-0 text-warning">Class Performance by Subject</h5>
+    <!-- Section 3: Subject Performance Analysis -->
+    <?php
+    $whereSubj = ["a.semester_id = ?"];
+    $paramsSubj = [$semester_id];
+    if ($class_id) {
+        $whereSubj[] = "ac.class_id = ?";
+        $paramsSubj[] = $class_id;
+    }
+    if ($level) {
+        $whereSubj[] = "EXISTS (SELECT 1 FROM classes c WHERE c.class_id = ac.class_id AND c.level = ?)";
+        $paramsSubj[] = $level;
+    }
+    if ($assessment_type_id) {
+        $whereSubj[] = "a.assessment_type_id = ?";
+        $paramsSubj[] = $assessment_type_id;
+    }
+    $whereSubjClause = implode(' AND ', $whereSubj);
+
+    $stmt = $db->prepare("
+        SELECT
+            sub.subject_id,
+            sub.subject_name,
+            COUNT(DISTINCT a.assessment_id) as total_assessments,
+            COUNT(r.result_id) as total_attempts,
+            COUNT(CASE WHEN r.status = 'completed' THEN 1 END) as completed_attempts,
+            ROUND(AVG(CASE WHEN r.status = 'completed' THEN r.score END), 2) as avg_score,
+            MIN(CASE WHEN r.status = 'completed' THEN r.score END) as min_score,
+            MAX(CASE WHEN r.status = 'completed' THEN r.score END) as max_score,
+            ROUND(
+                100.0 * COUNT(CASE WHEN r.status = 'completed' AND r.score >= 10 THEN 1 END) /
+                NULLIF(COUNT(CASE WHEN r.status = 'completed' THEN 1 END), 0),
+                2
+            ) as pass_rate
+        FROM subjects sub
+        JOIN assessmentclasses ac ON sub.subject_id = ac.subject_id
+        JOIN assessments a ON ac.assessment_id = a.assessment_id
+        LEFT JOIN results r ON a.assessment_id = r.assessment_id
+        WHERE $whereSubjClause
+        GROUP BY sub.subject_id, sub.subject_name
+        HAVING completed_attempts >= 10
+        ORDER BY avg_score DESC
+    ");
+    $stmt->execute($paramsSubj);
+    $subjectPerformance = $stmt->fetchAll();
+    ?>
+
+    <div class="report-section">
+        <div class="section-header">
+            <h5 class="mb-0"><i class="fas fa-book me-2"></i>3. Subject Performance Analysis</h5>
         </div>
-        <div class="card-body">
-            <div class="table-responsive" id="classPerformanceContainer">
-                <p class="text-center py-3">Select filters and apply to see class performance data.</p>
+        <div class="p-4">
+            <div class="mb-4">
+                <canvas id="subjectChart" height="80"></canvas>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Rank</th>
+                            <th>Subject</th>
+                            <th>Assessments</th>
+                            <th>Attempts</th>
+                            <th>Avg Score</th>
+                            <th>Min</th>
+                            <th>Max</th>
+                            <th>Pass Rate</th>
+                            <th>Difficulty</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($subjectPerformance as $idx => $subj):
+                            $difficulty = $subj['avg_score'] >= 70 ? 'Easy' :
+                                         ($subj['avg_score'] >= 50 ? 'Moderate' : 'Difficult');
+                            $diffClass = $subj['avg_score'] >= 70 ? 'text-success' :
+                                        ($subj['avg_score'] >= 50 ? 'text-warning' : 'text-danger');
+                        ?>
+                        <tr>
+                            <td><?= $idx + 1 ?></td>
+                            <td><strong><?= htmlspecialchars($subj['subject_name']) ?></strong></td>
+                            <td><?= $subj['total_assessments'] ?></td>
+                            <td><?= $subj['total_attempts'] ?></td>
+                            <td><strong><?= $subj['avg_score'] ?>%</strong></td>
+                            <td><?= $subj['min_score'] ?>%</td>
+                            <td><?= $subj['max_score'] ?>%</td>
+                            <td><?= $subj['pass_rate'] ?>%</td>
+                            <td class="<?= $diffClass ?>"><?= $difficulty ?></td>
+                        </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
 
-    <!-- Assessment Type Performance Section -->
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header" style="background: linear-gradient(145deg, #2c3e50 0%, #34495e 100%);">
-            <h5 class="card-title mb-0 text-warning">Performance by Assessment Type</h5>
+    <!-- Section 4: Top Performing Students -->
+    <?php
+    $topWhere = ["r.status = 'completed'", "a.semester_id = ?"];
+    $topParams = [$semester_id];
+
+    if ($subject_id) {
+        $topWhere[] = "EXISTS (SELECT 1 FROM assessmentclasses ac WHERE ac.assessment_id = a.assessment_id AND ac.subject_id = ?)";
+        $topParams[] = $subject_id;
+    }
+    if ($class_id) {
+        $topWhere[] = "s.class_id = ?";
+        $topParams[] = $class_id;
+    }
+    if ($level) {
+        $topWhere[] = "c.level = ?";
+        $topParams[] = $level;
+    }
+    if ($assessment_type_id) {
+        $topWhere[] = "a.assessment_type_id = ?";
+        $topParams[] = $assessment_type_id;
+    }
+
+    // Lower threshold when filtering by subject (fewer assessments per subject)
+    $minCompleted = $subject_id ? 1 : 3;
+
+    $stmt = $db->prepare("
+        SELECT
+            s.student_id,
+            CONCAT(s.first_name, ' ', s.last_name) as student_name,
+            c.class_name,
+            p.program_name,
+            COUNT(r.result_id) as total_completed,
+            ROUND(AVG(r.score), 2) as avg_score,
+            MAX(r.score) as highest_score,
+            MIN(r.score) as lowest_score
+        FROM results r
+        JOIN students s ON r.student_id = s.student_id
+        JOIN classes c ON s.class_id = c.class_id
+        JOIN programs p ON c.program_id = p.program_id
+        JOIN assessments a ON r.assessment_id = a.assessment_id
+        WHERE " . implode(' AND ', $topWhere) . "
+        GROUP BY s.student_id, s.first_name, s.last_name, c.class_name, p.program_name
+        HAVING total_completed >= $minCompleted AND avg_score >= 10
+        ORDER BY avg_score DESC, total_completed DESC
+        LIMIT 20
+    ");
+    $stmt->execute($topParams);
+    $topStudents = $stmt->fetchAll();
+    ?>
+
+    <div class="report-section">
+        <div class="section-header">
+            <h5 class="mb-0"><i class="fas fa-trophy me-2"></i>4. Top Performing Students (Top 20)</h5>
         </div>
-        <div class="card-body">
-            <div class="table-responsive" id="assessmentTypeContainer">
-                <p class="text-center py-3">Select filters and apply to see assessment type performance.</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Assessment Stats Section -->
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header" style="background: linear-gradient(145deg, #2c3e50 0%, #34495e 100%);">
-            <h5 class="card-title mb-0 text-warning">Assessment Participation Statistics</h5>
-        </div>
-        <div class="card-body">
-            <div class="table-responsive" id="assessmentStatsContainer">
-                <p class="text-center py-3">Select filters and apply to see assessment statistics.</p>
-            </div>
-        </div>
-    </div>
-</main>
-
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const levelSelect = document.getElementById('level');
-        const classSelect = document.getElementById('class_id');
-        const applyFiltersBtn = document.getElementById('applyFilters');
-        const resetBtn = document.getElementById('resetBtn');
-
-        // Level filter functionality - filter classes based on selected level
-        levelSelect.addEventListener('change', function() {
-            const selectedLevel = this.value;
-            
-            // Reset class selection
-            classSelect.value = '';
-            
-            // Show/hide class options based on selected level
-            Array.from(classSelect.options).forEach(option => {
-                if (option.value === '') return; // Skip "All Classes" option
-                
-                const optionLevel = option.getAttribute('data-level');
-                if (!selectedLevel || optionLevel === selectedLevel) {
-                    option.style.display = '';
-                } else {
-                    option.style.display = 'none';
-                }
-            });
-        });
-
-        // Apply filters button handler
-        applyFiltersBtn.addEventListener('click', function() {
-            loadPerformanceData();
-        });
-
-        // Reset button handler
-        resetBtn.addEventListener('click', function() {
-            document.getElementById('level').value = '';
-            document.getElementById('class_id').value = '';
-            document.getElementById('subject_id').value = '';
-            document.getElementById('semester_id').value = '<?php echo $currentSemesterId; ?>';
-            
-            // Reset class options visibility
-            Array.from(classSelect.options).forEach(option => {
-                option.style.display = '';
-            });
-        });
-
-        // Load data based on current filters
-        function loadPerformanceData() {
-            const level = document.getElementById('level').value;
-            const classId = document.getElementById('class_id').value;
-            const subjectId = document.getElementById('subject_id').value;
-            const semesterId = document.getElementById('semester_id').value;
-
-            // Show loading indicators
-            document.getElementById('topPerformersContainer').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2">Loading top performers data...</p></div>';
-            document.getElementById('classPerformanceContainer').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-success" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2">Loading class performance data...</p></div>';
-            document.getElementById('assessmentTypeContainer').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-warning" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2">Loading assessment type data...</p></div>';
-            document.getElementById('assessmentStatsContainer').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-info" role="status"><span class="visually-hidden">Loading...</span></div><p class="mt-2">Loading assessment statistics...</p></div>';
-
-            // Build query string
-            let queryString = '';
-            if (level) queryString += `&level=${encodeURIComponent(level)}`;
-            if (classId) queryString += `&class_id=${classId}`;
-            if (subjectId) queryString += `&subject_id=${subjectId}`;
-            if (semesterId) queryString += `&semester_id=${semesterId}`;
-
-            // Fetch data from API
-            fetch(`../api/get_student_performance.php?${queryString.substring(1)}`)
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Network response was not ok');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    // Update summary stats
-                    document.getElementById('totalStudentsCount').textContent = data.summary.total_students || 0;
-                    document.getElementById('totalSubjectsCount').textContent = data.summary.total_subjects || 0;
-                    document.getElementById('totalAssessmentsCount').textContent = data.summary.total_assessments || 0;
-                    document.getElementById('totalAssessmentTypesCount').textContent = data.summary.total_assessment_types || 0;
-                    document.getElementById('overallAvgScore').textContent = data.summary.overall_avg_score || 0;
-
-                    // Render top performers
-                    renderTopPerformers(data.top_performers);
-
-                    // Render class performance
-                    renderClassPerformance(data.class_performance);
-
-                    // Render assessment type breakdown
-                    renderAssessmentTypeBreakdown(data.assessment_type_breakdown);
-
-                    // Render assessment stats
-                    renderAssessmentStats(data.assessment_stats);
-                })
-                .catch(error => {
-                    console.error('Error fetching performance data:', error);
-                    document.getElementById('topPerformersContainer').innerHTML = '<div class="alert alert-danger">Error loading top performers data. Please try again.</div>';
-                    document.getElementById('classPerformanceContainer').innerHTML = '<div class="alert alert-danger">Error loading class performance data. Please try again.</div>';
-                    document.getElementById('assessmentTypeContainer').innerHTML = '<div class="alert alert-danger">Error loading assessment type data. Please try again.</div>';
-                    document.getElementById('assessmentStatsContainer').innerHTML = '<div class="alert alert-danger">Error loading assessment statistics. Please try again.</div>';
-                });
-        }
-
-        // Render top performers data
-        function renderTopPerformers(topPerformers) {
-            const container = document.getElementById('topPerformersContainer');
-
-            if (!topPerformers || topPerformers.length === 0) {
-                container.innerHTML = '<div class="alert alert-info">No top performers data available for the selected filters.</div>';
-                return;
-            }
-
-            let html = '';
-
-            topPerformers.forEach(subject => {
-                html += `
-                <h4 class="mt-3 mb-3">${subject.subject_name}</h4>
-                <table class="table table-striped table-hover">
+        <div class="p-4">
+            <div class="table-responsive">
+                <table class="table table-hover">
                     <thead class="table-dark">
                         <tr>
                             <th>Rank</th>
                             <th>Student Name</th>
-                            <th>Class</th>
-                            <th>Level</th>
                             <th>Program</th>
-                            <th>Average Score</th>
-                            <th>Best Completion Time</th>
+                            <th>Class</th>
+                            <th>Completed</th>
+                            <th>Avg Score</th>
+                            <th>Highest Score</th>
+                            <th>Award</th>
                         </tr>
                     </thead>
                     <tbody>
-            `;
-
-                if (subject.students.length === 0) {
-                    html += `<tr><td colspan="7" class="text-center">No students data available for this subject.</td></tr>`;
-                } else {
-                    subject.students.forEach((student, index) => {
-                        html += `
+                        <?php foreach ($topStudents as $idx => $student): ?>
                         <tr>
-                            <td>${index + 1}</td>
-                            <td>${student.student_name}</td>
-                            <td>${student.class_name}</td>
-                            <td><span class="badge bg-info">${student.level || 'N/A'}</span></td>
-                            <td>${student.program_name}</td>
                             <td>
-                                <div class="d-flex align-items-center">
-                                    <div class="progress flex-grow-1 me-2" style="height: 10px;">
-                                        <div class="progress-bar bg-success" role="progressbar" style="width: ${student.avg_score}%"></div>
-                                    </div>
-                                    <span>${student.avg_score}</span>
-                                </div>
+                                <?php if ($idx < 3): ?>
+                                    <span class="badge bg-warning">🏆 <?= $idx + 1 ?></span>
+                                <?php else: ?>
+                                    <?= $idx + 1 ?>
+                                <?php endif; ?>
                             </td>
-                            <td>${student.best_completion_time}</td>
+                            <td><strong><?= htmlspecialchars($student['student_name']) ?></strong></td>
+                            <td><?= htmlspecialchars($student['program_name']) ?></td>
+                            <td><?= htmlspecialchars($student['class_name']) ?></td>
+                            <td><?= $student['total_completed'] ?></td>
+                            <td><strong><?= $student['avg_score'] ?>%</strong></td>
+                            <td><?= $student['highest_score'] ?>%</td>
+                            <td>
+                                <?php if ($student['avg_score'] >= 90): ?>
+                                    <span class="badge bg-success">Distinction</span>
+                                <?php elseif ($student['avg_score'] >= 70): ?>
+                                    <span class="badge bg-info">Merit</span>
+                                <?php elseif ($student['avg_score'] >= 50): ?>
+                                    <span class="badge bg-primary">Pass</span>
+                                <?php endif; ?>
+                            </td>
                         </tr>
-                    `;
-                    });
-                }
-
-                html += `
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
-            `;
-            });
+            </div>
+        </div>
+    </div>
 
-            container.innerHTML = html;
-        }
+    <!-- Section 5: Assessment Analytics -->
+    <?php
+    $assessWhere = ["a.semester_id = ?"];
+    $assessParams = [$semester_id];
+    if ($class_id) {
+        $assessWhere[] = "ac.class_id = ?";
+        $assessParams[] = $class_id;
+    }
+    if ($subject_id) {
+        $assessWhere[] = "ac.subject_id = ?";
+        $assessParams[] = $subject_id;
+    }
+    if ($level) {
+        $assessWhere[] = "EXISTS (SELECT 1 FROM classes c WHERE c.class_id = ac.class_id AND c.level = ?)";
+        $assessParams[] = $level;
+    }
+    if ($assessment_type_id) {
+        $assessWhere[] = "a.assessment_type_id = ?";
+        $assessParams[] = $assessment_type_id;
+    }
 
-        // Render class performance data
-        function renderClassPerformance(classPerformance) {
-            const container = document.getElementById('classPerformanceContainer');
+    $stmt = $db->prepare("
+        SELECT
+            a.assessment_id,
+            a.title,
+            sub.subject_name,
+            a.date,
+            COUNT(DISTINCT r.student_id) as students_attempted,
+            COUNT(DISTINCT CASE WHEN r.status = 'completed' THEN r.student_id END) as students_completed,
+            COUNT(CASE WHEN r.status = 'completed' THEN 1 END) as total_completed,
+            ROUND(AVG(CASE WHEN r.status = 'completed' THEN r.score END), 2) as avg_score,
+            MIN(CASE WHEN r.status = 'completed' THEN r.score END) as min_score,
+            MAX(CASE WHEN r.status = 'completed' THEN r.score END) as max_score,
+            (SELECT COUNT(*) FROM questions q WHERE q.assessment_id = a.assessment_id) as question_count
+        FROM assessments a
+        JOIN assessmentclasses ac ON a.assessment_id = ac.assessment_id
+        JOIN subjects sub ON ac.subject_id = sub.subject_id
+        LEFT JOIN results r ON a.assessment_id = r.assessment_id
+        WHERE " . implode(' AND ', $assessWhere) . "
+        GROUP BY a.assessment_id, a.title, sub.subject_name, a.date
+        HAVING question_count > 0
+        ORDER BY a.date DESC
+        LIMIT 15
+    ");
+    $stmt->execute($assessParams);
+    $assessmentAnalytics = $stmt->fetchAll();
+    ?>
 
-            if (!classPerformance || classPerformance.length === 0) {
-                container.innerHTML = '<div class="alert alert-info">No class performance data available for the selected filters.</div>';
-                return;
-            }
-
-            let html = '';
-
-            classPerformance.forEach(subject => {
-                html += `
-                <h4 class="mt-3 mb-3">${subject.subject_name}</h4>
-                <table class="table table-striped table-hover">
+    <div class="report-section">
+        <div class="section-header">
+            <h5 class="mb-0"><i class="fas fa-clipboard-list me-2"></i>5. Assessment Analytics (Recent 15)</h5>
+        </div>
+        <div class="p-4">
+            <div class="table-responsive">
+                <table class="table table-hover table-sm">
                     <thead class="table-dark">
                         <tr>
-                            <th>Rank</th>
-                            <th>Class</th>
-                            <th>Level</th>
-                            <th>Program</th>
-                            <th>Students</th>
-                            <th>Average Score</th>
-                            <th>Min Score</th>
-                            <th>Max Score</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-
-                if (subject.classes.length === 0) {
-                    html += `<tr><td colspan="8" class="text-center">No class data available for this subject.</td></tr>`;
-                } else {
-                    subject.classes.forEach((classItem, index) => {
-                        html += `
-                        <tr>
-                        <td>${index + 1}</td>
-                        <td>${classItem.class_name}</td>
-                        <td><span class="badge bg-info">${classItem.level || 'N/A'}</span></td>
-                        <td>${classItem.program_name}</td>
-                        <td>${classItem.total_students}</td>
-                        <td>
-                            <div class="d-flex align-items-center">
-                                <div class="progress flex-grow-1 me-2" style="height: 10px;">
-                                    <div class="progress-bar bg-success" role="progressbar" style="width: ${classItem.avg_score}%"></div>
-                                </div>
-                                <span>${classItem.avg_score}</span>
-                            </div>
-                        </td>
-                        <td>${classItem.min_score}</td>
-                        <td>${classItem.max_score}</td>
-                    </tr>
-                `;
-                    });
-                }
-
-                html += `
-                    </tbody>
-                </table>
-            `;
-            });
-
-            container.innerHTML = html;
-        }
-
-        // Render assessment type breakdown data
-        function renderAssessmentTypeBreakdown(assessmentTypeData) {
-            const container = document.getElementById('assessmentTypeContainer');
-
-            if (!assessmentTypeData || assessmentTypeData.length === 0) {
-                container.innerHTML = '<div class="alert alert-info">No assessment type data available for the selected filters.</div>';
-                return;
-            }
-
-            let html = `
-                <table class="table table-striped table-hover">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>Assessment Type</th>
-                            <th>Weight (%)</th>
-                            <th>Total Assessments</th>
-                            <th>Completed Results</th>
-                            <th>Students Attempted</th>
-                            <th>Average Score</th>
-                            <th>Min Score</th>
-                            <th>Max Score</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-            `;
-
-            assessmentTypeData.forEach(typeData => {
-                const scoreClass = typeData.average_score >= 70 ? 'success' : (typeData.average_score >= 50 ? 'warning' : 'danger');
-                
-                html += `
-                    <tr>
-                        <td>
-                            <strong>${typeData.type_name}</strong>
-                            ${typeData.weight_percentage > 0 ? `<br><small class="text-muted">Weight: ${typeData.weight_percentage}%</small>` : ''}
-                        </td>
-                        <td>
-                            ${typeData.weight_percentage > 0 ? 
-                                `<span class="badge bg-info">${typeData.weight_percentage}%</span>` : 
-                                '<span class="text-muted">-</span>'
-                            }
-                        </td>
-                        <td>${typeData.total_assessments}</td>
-                        <td>${typeData.completed_results}</td>
-                        <td>${typeData.students_attempted}</td>
-                        <td>
-                            ${typeData.average_score ? 
-                                `<div class="d-flex align-items-center">
-                                    <div class="progress flex-grow-1 me-2" style="height: 10px;">
-                                        <div class="progress-bar bg-${scoreClass}" role="progressbar" style="width: ${typeData.average_score}%"></div>
-                                    </div>
-                                    <span>${typeData.average_score}%</span>
-                                </div>` : 
-                                '<span class="text-muted">-</span>'
-                            }
-                        </td>
-                        <td>${typeData.min_score || '-'}</td>
-                        <td>${typeData.max_score || '-'}</td>
-                    </tr>
-                `;
-            });
-
-            html += `
-                    </tbody>
-                </table>
-            `;
-
-            container.innerHTML = html;
-        }
-
-        // Render assessment statistics data
-        function renderAssessmentStats(assessmentStats) {
-            const container = document.getElementById('assessmentStatsContainer');
-
-            if (!assessmentStats || assessmentStats.length === 0) {
-                container.innerHTML = '<div class="alert alert-info">No assessment statistics available for the selected filters.</div>';
-                return;
-            }
-
-            let html = '';
-
-            assessmentStats.forEach(subject => {
-                html += `
-                <h4 class="mt-3 mb-3">${subject.subject_name}</h4>
-                <div class="mb-3">
-                    <div class="card bg-light">
-                        <div class="card-body">
-                            <h5 class="card-title">Subject Summary</h5>
-                            <div class="row">
-                                <div class="col-md-4">
-                                    <p><strong>Total Students:</strong> ${subject.total_students}</p>
-                                </div>
-                                <div class="col-md-4">
-                                    <p><strong>Students Taken:</strong> ${subject.students_taken}</p>
-                                </div>
-                                <div class="col-md-4">
-                                    <p><strong>Students Not Taken:</strong> ${subject.students_not_taken}</p>
-                                </div>
-                            </div>
-                            <div class="progress" style="height: 20px;">
-                                <div class="progress-bar bg-success" role="progressbar" 
-                                     style="width: ${(subject.students_taken / subject.total_students) * 100}%">
-                                    ${Math.round((subject.students_taken / subject.total_students) * 100)}% Completed
-                                </div>
-                                <div class="progress-bar bg-danger" role="progressbar" 
-                                     style="width: ${(subject.students_not_taken / subject.total_students) * 100}%">
-                                    ${Math.round((subject.students_not_taken / subject.total_students) * 100)}% Pending
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <table class="table table-striped table-hover">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>Class</th>
-                            <th>Level</th>
-                            <th>Program</th>
-                            <th>Total Students</th>
-                            <th>Students Taken</th>
-                            <th>Students Not Taken</th>
-                            <th>Total Assessments</th>
+                            <th>Assessment</th>
+                            <th>Subject</th>
+                            <th>Date</th>
+                            <th>Attempted</th>
+                            <th>Completed</th>
                             <th>Completion Rate</th>
+                            <th>Avg Score</th>
+                            <th>Range</th>
                         </tr>
                     </thead>
                     <tbody>
-            `;
-
-                if (subject.class_stats.length === 0) {
-                    html += `<tr><td colspan="8" class="text-center">No class statistics available for this subject.</td></tr>`;
-                } else {
-                    subject.class_stats.forEach(classStats => {
-                        html += `
+                        <?php foreach ($assessmentAnalytics as $assess):
+                            $completion_rate = $assess['students_attempted'] > 0 ?
+                                round(($assess['students_completed'] / $assess['students_attempted']) * 100, 1) : 0;
+                        ?>
                         <tr>
-                            <td>${classStats.class_name}</td>
-                            <td><span class="badge bg-info">${classStats.level || 'N/A'}</span></td>
-                            <td>${classStats.program_name}</td>
-                            <td>${classStats.total_students}</td>
-                            <td>${classStats.students_taken}</td>
-                            <td>${classStats.students_not_taken}</td>
-                            <td>${classStats.total_assessments}</td>
+                            <td><strong><?= htmlspecialchars($assess['title']) ?></strong></td>
+                            <td><?= htmlspecialchars($assess['subject_name']) ?></td>
+                            <td><?= date('M d, Y', strtotime($assess['date'])) ?></td>
+                            <td><?= $assess['students_attempted'] ?></td>
+                            <td><?= $assess['students_completed'] ?></td>
                             <td>
-                                <div class="d-flex align-items-center">
-                                    <div class="progress flex-grow-1 me-2" style="height: 10px;">
-                                        <div class="progress-bar ${parseInt(classStats.completion_rate) < 50 ? 'bg-danger' : 'bg-success'}" 
-                                             role="progressbar" style="width: ${classStats.completion_rate}"></div>
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar <?= $completion_rate >= 70 ? 'bg-success' : 'bg-warning' ?>"
+                                         style="width: <?= $completion_rate ?>%">
+                                        <?= $completion_rate ?>%
                                     </div>
-                                    <span>${classStats.completion_rate}</span>
                                 </div>
                             </td>
+                            <td><strong><?= $assess['avg_score'] ?? 'N/A' ?>%</strong></td>
+                            <td><?= $assess['min_score'] ?? '-' ?>% - <?= $assess['max_score'] ?? '-' ?>%</td>
                         </tr>
-                    `;
-                    });
-                }
-
-                html += `
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
-            `;
-            });
+            </div>
+        </div>
+    </div>
 
-            container.innerHTML = html;
+    <?php endif; ?>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+// Cascading Filter Logic
+function filterClasses() {
+    const levelSelect = document.getElementById('levelFilter');
+    const classSelect = document.getElementById('classFilter');
+    const selectedLevel = levelSelect.value;
+
+    // Show/hide class options based on selected level
+    Array.from(classSelect.options).forEach(option => {
+        if (option.value === '') {
+            option.style.display = 'block';
+            return;
         }
 
-        // Load initial data if filters are pre-selected
-        if (document.getElementById('semester_id').value) {
-            loadPerformanceData();
+        const optionLevel = option.getAttribute('data-level');
+        if (!selectedLevel || optionLevel === selectedLevel) {
+            option.style.display = 'block';
+        } else {
+            option.style.display = 'none';
+            if (option.selected) {
+                classSelect.value = '';
+            }
         }
-
-        // Export to PDF button handler
-        document.getElementById('exportPdfBtn').addEventListener('click', function() {
-            const level = document.getElementById('level').value;
-            const classId = document.getElementById('class_id').value;
-            const subjectId = document.getElementById('subject_id').value;
-            const semesterId = document.getElementById('semester_id').value;
-
-            // Build query string
-            let queryString = '';
-            if (level) queryString += `&level=${encodeURIComponent(level)}`;
-            if (classId) queryString += `&class_id=${classId}`;
-            if (subjectId) queryString += `&subject_id=${subjectId}`;
-            if (semesterId) queryString += `&semester_id=${semesterId}`;
-
-            // Redirect to export PDF script
-            window.location.href = `export_performance_pdf.php?${queryString.substring(1)}`;
-        });
     });
+
+    // Reset class selection if current selection is hidden
+    if (classSelect.selectedIndex > 0 && classSelect.options[classSelect.selectedIndex].style.display === 'none') {
+        classSelect.value = '';
+    }
+
+    filterSubjects();
+}
+
+function filterSubjects() {
+    const classSelect = document.getElementById('classFilter');
+    const subjectSelect = document.getElementById('subjectFilter');
+    const selectedClassId = classSelect.value;
+
+    if (!selectedClassId) {
+        // Show all subjects if no class selected
+        Array.from(subjectSelect.options).forEach(option => {
+            option.style.display = 'block';
+        });
+        return;
+    }
+
+    // Show/hide subject options based on selected class
+    Array.from(subjectSelect.options).forEach(option => {
+        if (option.value === '') {
+            option.style.display = 'block';
+            return;
+        }
+
+        const subjectClassIds = option.getAttribute('data-classes');
+        if (!subjectClassIds) {
+            option.style.display = 'block';
+            return;
+        }
+
+        const classIds = subjectClassIds.split(',');
+        if (classIds.includes(selectedClassId)) {
+            option.style.display = 'block';
+        } else {
+            option.style.display = 'none';
+            if (option.selected) {
+                subjectSelect.value = '';
+            }
+        }
+    });
+
+    // Reset subject selection if current selection is hidden
+    if (subjectSelect.selectedIndex > 0 && subjectSelect.options[subjectSelect.selectedIndex].style.display === 'none') {
+        subjectSelect.value = '';
+    }
+}
+
+// Initialize filters on page load
+document.addEventListener('DOMContentLoaded', function() {
+    filterClasses();
+});
+
+// Pass/Fail Chart
+<?php if (isset($overview) && $overview['completed_submissions'] > 0): ?>
+new Chart(document.getElementById('passFailChart'), {
+    type: 'doughnut',
+    data: {
+        labels: ['Passed', 'Failed'],
+        datasets: [{
+            data: [<?= $overview['passed'] ?>, <?= $overview['failed'] ?>],
+            backgroundColor: ['#28a745', '#dc3545']
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+            title: { display: true, text: 'Pass/Fail Distribution' },
+            legend: {
+                position: 'bottom'
+            }
+        }
+    }
+});
+<?php endif; ?>
+
+// Subject Performance Chart
+<?php if (!empty($subjectPerformance)): ?>
+new Chart(document.getElementById('subjectChart'), {
+    type: 'bar',
+    data: {
+        labels: <?= json_encode(array_column($subjectPerformance, 'subject_name')) ?>,
+        datasets: [{
+            label: 'Average Score (%)',
+            data: <?= json_encode(array_column($subjectPerformance, 'avg_score')) ?>,
+            backgroundColor: '#ffd700'
+        }, {
+            label: 'Pass Rate (%)',
+            data: <?= json_encode(array_column($subjectPerformance, 'pass_rate')) ?>,
+            backgroundColor: '#28a745'
+        }]
+    },
+    options: {
+        responsive: true,
+        scales: {
+            y: { beginAtZero: true, max: 100 }
+        },
+        plugins: {
+            title: { display: true, text: 'Subject Performance Comparison' }
+        }
+    }
+});
+<?php endif; ?>
 </script>
 
 <?php
